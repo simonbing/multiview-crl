@@ -9,7 +9,7 @@ from abc import abstractmethod
 from collections import Counter, OrderedDict
 from typing import Callable, Optional
 
-import faiss
+# import faiss
 import numpy as np
 import pandas as pd
 import torch
