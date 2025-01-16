@@ -10,7 +10,7 @@ import random
 import uuid
 import warnings
 
-import faiss
+# import faiss
 import numpy as np
 import pandas as pd
 import torch
