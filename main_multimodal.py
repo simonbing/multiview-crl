@@ -26,12 +26,12 @@ from torchvision import transforms
 from torchvision.models import resnet18
 from typing_extensions import Callable, List
 
-import datasets
-import dci
-import utils
-from encoders import TextEncoder2D
-from infinite_iterator import InfiniteIterator
-from losses import infonce_loss
+import crc.baselines.multiview_crl.datasets as datasets
+import crc.baselines.multiview_crl.dci as dci
+import crc.baselines.multiview_crl.utils as utils
+from crc.baselines.multiview_crl.encoders import TextEncoder2D
+from crc.baselines.multiview_crl.infinite_iterator import InfiniteIterator
+from crc.baselines.multiview_crl.losses import infonce_loss
 
 device_ids = [0]
 
@@ -205,7 +205,8 @@ def compute_gt_idx(args):
         raise f"No ground truth content computed for {args.dataset_name=} yet!"
 
 
-def train_step(data, fs: List[Callable], loss_func, optimizer, params, args):
+def train_step(data, device, fs: List[Callable], loss_func, optimizer, params,
+               modalities, content_indices, subsets, n_views_arg, selection):
     """
     Perform a single training step.
 
@@ -227,8 +228,9 @@ def train_step(data, fs: List[Callable], loss_func, optimizer, params, args):
     # compute loss
     hz = []  # concat the learned reprentation for all views
     n_views = int(0)
-    for m_midx, m in enumerate(args.modalities):
+    for m_midx, m in enumerate(modalities):
         samples = data[m]
+        samples = [sample.to(device) for sample in samples]
         hz_m = fs[m_midx](torch.concat(samples, 0))
         hz += [hz_m]
         n_views += len(samples)
@@ -240,21 +242,21 @@ def train_step(data, fs: List[Callable], loss_func, optimizer, params, args):
 
     avg_logits = hz.mean(0)[None]
     if "content_indices" not in data:
-        data["content_indices"] = args.content_indices
+        data["content_indices"] = content_indices
     content_size = [len(content) for content in data["content_indices"]]  # (batch_size, )
 
-    if args.selection in ["ground_truth", "concat"]:
-        estimated_content_indices = args.content_indices  # len = len(subsets)
+    if selection in ["ground_truth", "concat"]:
+        estimated_content_indices = content_indices  # len = len(subsets)
     else:
-        if args.subsets[-1] == list(range(args.n_views)) and content_size[-1] > 0:
+        if subsets[-1] == list(range(n_views)) and content_size[-1] > 0:
             # when the joint intersection is not empty,
             # we use the fact that the joint intersection will be in all smaller subsets
             content_masks = utils.smart_gumbel_softmax_mask(
-                avg_logits=avg_logits, content_sizes=content_size, subsets=args.subsets
+                avg_logits=avg_logits, content_sizes=content_size, subsets=subsets
             )
         else:
             content_masks = utils.gumbel_softmax_mask(
-                avg_logits=avg_logits, content_sizes=content_size, subsets=args.subsets
+                avg_logits=avg_logits, content_sizes=content_size, subsets=subsets
             )
 
         estimated_content_indices = []
@@ -262,7 +264,7 @@ def train_step(data, fs: List[Callable], loss_func, optimizer, params, args):
             c_ind = torch.where(c_mask)[-1].tolist()
             estimated_content_indices += [c_ind]
 
-    loss_value = loss_func(hz.reshape(n_views, -1, hz.shape[-1]), estimated_content_indices, args.subsets)
+    loss_value = loss_func(hz.reshape(n_views, -1, hz.shape[-1]), estimated_content_indices, subsets)
 
     # backprop
     if optimizer is not None:
@@ -273,7 +275,8 @@ def train_step(data, fs: List[Callable], loss_func, optimizer, params, args):
     return loss_value.item(), estimated_content_indices
 
 
-def val_step(data, fs, loss_func, args):
+def val_step(data, device, fs, loss_func, modalities, content_indices, subsets,
+             n_views_arg, selection):
     """
     Perform a validation step.
 
@@ -286,10 +289,16 @@ def val_step(data, fs, loss_func, args):
     Returns:
         The result of the validation step.
     """
-    return train_step(data, fs, loss_func, optimizer=None, params=None, args=args)
+    optimizer = None
+    params = None
+    return train_step(data, device, fs, loss_func, optimizer, params,
+                      modalities, content_indices, subsets, n_views_arg,
+                      selection)
 
 
-def get_data(dataset, fs, loss_func, dataloader_kwargs, num_samples=None, args=None):
+def get_data(dataset, device, fs, loss_func, dataloader_kwargs, modalities,
+             factors, content_indices, subsets, n_views_arg, selection,
+             num_samples=None, args=None):
     """
     Get data from the dataset and compute loss values and representations for each modality.
 
@@ -309,10 +318,11 @@ def get_data(dataset, fs, loss_func, dataloader_kwargs, num_samples=None, args=N
 
     rdict = {"loss_values": [], "content_indices": []}
 
-    for m in args.modalities:
+    for m in modalities:
         rdict[f"hz_{m}"] = []  # initialize for learned representations
-        rdict[f"labels_{m}"] = {v: [] for v in args.DATASETCLASS.FACTORS[m].values()}
-        rdict[f"hz_{m}_subsets"] = {s: [] for s in args.subsets}  # selected hz dimensions
+        # rdict[f"labels_{m}"] = {v: [] for v in args.DATASETCLASS.FACTORS[m].values()}
+        rdict[f"labels_{m}"] = {v: [] for v in factors[m].values()}
+        rdict[f"hz_{m}_subsets"] = {s: [] for s in subsets}  # selected hz dimensions
 
     i = 0
     num_samples = num_samples or len(dataset)
@@ -323,13 +333,17 @@ def get_data(dataset, fs, loss_func, dataloader_kwargs, num_samples=None, args=N
             data = next(iterator)  # contains images, texts, and labels
 
             # compute loss
-            loss_value, estimated_content_indices = val_step(data, fs, loss_func, args=args)
+            loss_value, estimated_content_indices = val_step(
+                data, device, fs, loss_func, modalities, content_indices,
+                subsets, n_views_arg, selection
+            )
 
             rdict["loss_values"].append([loss_value])
 
             # collect representations
-            for m_midx, m in enumerate(args.modalities):
+            for m_midx, m in enumerate(modalities):
                 samples = data[m]  # Shape: [n_views, batch_size, ...]
+                samples = [sample.to(device) for sample in samples]
                 hz_m = fs[m_midx](torch.concat(samples, 0)).detach().cpu().numpy()
                 rdict[f"hz_{m}"].append(hz_m)  # [n_views*batch_size, *text_dims]
 
@@ -339,8 +353,8 @@ def get_data(dataset, fs, loss_func, dataloader_kwargs, num_samples=None, args=N
                     labels_k = torch.concat([data[f"z_{m}"][i][k] for i in range(len(samples))], 0)
                     rdict[f"labels_{m}"][k].append(labels_k)
 
-                for s_id, s in enumerate(args.subsets):
-                    if len(args.subsets) == 1:  # there is only one content block to consider
+                for s_id, s in enumerate(subsets):
+                    if len(subsets) == 1:  # there is only one content block to consider
                         rdict[f"hz_{m}_subsets"][s].append(hz_m)
                     else:
                         rdict[f"hz_{m}_subsets"][s].append(hz_m[..., estimated_content_indices[s_id]])
@@ -701,18 +715,18 @@ def eval_step(ix, subset, modality, factor_name, discrete_factors_m, data):
         # linear regression
         linreg = LinearRegression(n_jobs=-1)
         r2_linreg = utils.evaluate_prediction(linreg, r2_score, *data)
-        if args.grid_search_eval:
-            # nonlinear regression # usually a bit compute-heavy here
-            gskrreg = GridSearchCV(
-                KernelRidge(kernel="rbf", gamma=0.1),
-                param_grid={
-                    "alpha": [1e0, 0.1, 1e-2, 1e-3],
-                    "gamma": np.logspace(-2, 2, 4),
-                },
-                cv=3,
-                n_jobs=-1,
-            )
-            r2_krreg = utils.evaluate_prediction(gskrreg, r2_score, *data)
+        # if args.grid_search_eval:
+        #     # nonlinear regression # usually a bit compute-heavy here
+        #     gskrreg = GridSearchCV(
+        #         KernelRidge(kernel="rbf", gamma=0.1),
+        #         param_grid={
+        #             "alpha": [1e0, 0.1, 1e-2, 1e-3],
+        #             "gamma": np.logspace(-2, 2, 4),
+        #         },
+        #         cv=3,
+        #         n_jobs=-1,
+        #     )
+        #     r2_krreg = utils.evaluate_prediction(gskrreg, r2_score, *data)
         # NOTE: MLP is a lightweight alternative
         r2_krreg = utils.evaluate_prediction(MLPRegressor(max_iter=1000), r2_score, *data)
 
