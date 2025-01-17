@@ -1238,6 +1238,10 @@ class MultiviewSynthDataset(torch.utils.data.Dataset):
 
         self.rs = np.random.RandomState(seed=seed)
 
+        for transform in transforms:
+            for p in transform.parameters():
+                p.requires_grad = False
+
         d = 4  # latent dimension
 
         # Sample from an independent Gaussian
