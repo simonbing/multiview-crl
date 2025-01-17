@@ -368,7 +368,10 @@ def get_data(dataset, device, fs, loss_func, dataloader_kwargs, modalities,
             rdict[k] = np.concatenate(v, axis=0)
         elif isinstance(v, dict):
             for k2, v2 in v.items():
-                rdict[k][k2] = np.concatenate(v2, axis=0)
+                try:
+                    rdict[k][k2] = np.concatenate(v2, axis=0)
+                except ValueError:
+                    rdict[k][k2] = np.concatenate([item.detach().cpu().numpy() for item in v2], axis=0)
     # rdict: hz_m_subsets: key: subset, values: selected "content" results
     return rdict
 
