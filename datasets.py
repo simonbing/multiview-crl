@@ -9,9 +9,11 @@ from abc import abstractmethod
 from collections import Counter, OrderedDict
 from typing import Callable, Optional
 
+from causalchamber.datasets import Dataset as ChamberData
 # import faiss
 import numpy as np
 import pandas as pd
+import skimage
 import torch
 from nltk.tokenize import sent_tokenize, word_tokenize
 from torchvision.datasets.folder import pil_loader
@@ -19,6 +21,7 @@ from torchvision.datasets.folder import pil_loader
 # import spaces
 import crc.baselines.multiview_crl.spaces as spaces
 from crc.baselines.multiview_crl.spaces import NBoxSpace
+
 
 
 class OrderedCounter(Counter, OrderedDict):
@@ -1295,27 +1298,142 @@ class MultiviewSynthDataset(torch.utils.data.Dataset):
 
 class MultiviewChambersDataset(torch.utils.data.Dataset):
     FACTORS = {
+        'camera': {
+            0: 'red',
+            1: 'green',
+            2: 'blue',
+            3: 'pol_1',
+            4: 'pol_2'
+        },
+        'current_intensities': {
+            0: 'red',
+            1: 'green',
+            2: 'blue'
+        },
+        'angle_1': {
+            0: 'pol_1'
+        },
+        'angle_2': {
+            0: 'pol_2'
+        }
+    }
+
+    DISCRETE_FACTORS = {
         'camera': {},
         'current_intensities': {},
         'angle_1': {},
         'angle_2': {}
     }
 
-    DISCRETE_FACTORS = {}
-
-    def __init__(self):
+    def __init__(self, dataset, data_root, exp_name='scm_2'):
         super().__init__()
 
+        self.img_base_path = os.path.join(data_root, dataset)
+        self.exp_name = exp_name
+
+        chamber_data = ChamberData(name=dataset,
+                                   root=data_root,
+                                   download=True)
+
+        # Get observational data
+        obs_df = chamber_data.get_experiment(
+            name=f'{exp_name}_reference').as_pandas_dataframe()
+
+        # Get interventional data (not important that it is interventional, just more data!)
+        red_df = chamber_data.get_experiment(
+            name=f'{exp_name}_red').as_pandas_dataframe()
+        green_df = chamber_data.get_experiment(
+            name=f'{exp_name}_green').as_pandas_dataframe()
+        blue_df = chamber_data.get_experiment(
+            name=f'{exp_name}_blue').as_pandas_dataframe()
+        pol_1_df = chamber_data.get_experiment(
+            name=f'{exp_name}_pol_1').as_pandas_dataframe()
+        pol_2_df = chamber_data.get_experiment(
+            name=f'{exp_name}_pol_2').as_pandas_dataframe()
+
+        self.data_df = pd.concat([obs_df, red_df, green_df, blue_df, pol_1_df, pol_2_df])
+        self.env_idxs = np.concatenate(
+            [np.repeat([i], len(df)) for i, df in
+             enumerate([obs_df, red_df, green_df, blue_df, pol_1_df, pol_2_df])]
+        )
+
+        # Standardization for (non-image) views
+        self.mean_ci = self.data_df[['current', 'ir_1', 'ir_2']].mean()
+        self.std_ci = self.data_df[['current', 'ir_1', 'ir_2']].std()
+
+        self.mean_angle_1 = self.data_df[['angle_1']].mean()
+        self.std_angle_1 = self.data_df[['angle_1']].std()
+
+        self.mean_angle_2 = self.data_df[['angle_2']].mean()
+        self.std_angle_2 = self.data_df[['angle_2']].std()
+
+        Z = self.data_df[['red', 'green', 'blue', 'pol_1', 'pol_2']]
+
+        # Standardize latents
+        self.Z = (Z - Z.mean()) / Z.std()
+
+    def _env_name_map(self, idx):
+        env_list = ['reference', 'red', 'green', 'blue', 'pol_1', 'pol_2']
+        map = [f'{self.exp_name}_{env}' for env in env_list]
+
+        return map[idx]
+
     def __len__(self):
-        pass
+        return len(self.data_df)
 
     def __getitem__(self, item):
-        pass
+        samples = {}
+
+        img_path = os.path.join(self.img_base_path,
+                                self._env_name_map(self.env_idxs[item]),
+                                'images_64',
+                                self.data_df['image_file'].iloc[item])
+        img_sample = skimage.io.imread(img_path)
+        img_sample = img_sample / 255.0
+        samples['camera'] = [torch.as_tensor(
+            img_sample.transpose((2, 0, 1)), dtype=torch.float32)]
+
+        ci_sample = (self.data_df[['current', 'ir_1', 'ir_2']].iloc[item] - self.mean_ci) / self.std_ci
+        samples['current_intensities'] = [torch.as_tensor(
+            ci_sample, dtype=torch.float32
+        )]
+
+        angle_1_sample = (self.data_df[['angle_1']].iloc[item] - self.mean_angle_1) / self.std_angle_1
+        samples['angle_1'] = [torch.as_tensor(
+            angle_1_sample, dtype=torch.float32
+        )]
+
+        angle_2_sample = (self.data_df[['angle_2']].iloc[item] - self.mean_angle_2) / self.std_angle_2
+        samples['angle_2'] = [torch.as_tensor(
+            angle_2_sample, dtype=torch.float32
+        )]
+
+        samples['z_camera'] = [{'red': self.Z['red'].iloc[item],
+                                'green': self.Z['green'].iloc[item],
+                                'blue': self.Z['blue'].iloc[item],
+                                'pol_1': self.Z['pol_1'].iloc[item],
+                                'pol_2': self.Z['pol_2'].iloc[item]}]
+        samples['z_current_intensities'] = [{'red': self.Z['red'].iloc[item],
+                                             'green': self.Z['green'].iloc[item],
+                                             'blue': self.Z['blue'].iloc[item]}]
+        samples['z_angle_1'] = [{'pol_1': self.Z['pol_1'].iloc[item]}]
+        samples['z_angle_2'] = [{'pol_2': self.Z['pol_2'].iloc[item]}]
+
+        return samples
 
 
-class MultiviewChmabersSemiSynthDataset(MultiviewChambersDataset):
-    def __init__(self, transforms, **kwargs):
+class MultiviewChambersSemiSynthDataset(MultiviewChambersDataset):
+    def __init__(self, transforms=[], **kwargs):
         super().__init__(**kwargs)
+
+        assert len(transforms) == 4, 'Require exactly 4 transforms!'
+
+        for transform in transforms:
+            try:
+                for p in transform.parameters():
+                    p.requires_grad = False
+            except AttributeError:
+                pass
 
         self.transforms = transforms
 
