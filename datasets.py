@@ -1216,8 +1216,8 @@ class MultiviewSynthDataset(torch.utils.data.Dataset):
         },
         'view_3': {
             0: "z_0",
-            2: "z_2",
-            1: "z_3",
+            1: "z_2",
+            2: "z_3",
         },
         'view_4': {
             0: "z_1",
@@ -1291,3 +1291,33 @@ class MultiviewSynthDataset(torch.utils.data.Dataset):
                                 'z_3': self.Z[item, 3]}]
 
         return samples
+
+
+class MultiviewChambersDataset(torch.utils.data.Dataset):
+    FACTORS = {
+        'camera': {},
+        'current_intensities': {},
+        'angle_1': {},
+        'angle_2': {}
+    }
+
+    DISCRETE_FACTORS = {}
+
+    def __init__(self):
+        super().__init__()
+
+    def __len__(self):
+        pass
+
+    def __getitem__(self, item):
+        pass
+
+
+class MultiviewChmabersSemiSynthDataset(MultiviewChambersDataset):
+    def __init__(self, transforms, **kwargs):
+        super().__init__(**kwargs)
+
+        self.transforms = transforms
+
+    def __getitem__(self, item):
+        pass
