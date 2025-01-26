@@ -1358,8 +1358,8 @@ class MultiviewChambersDataset(torch.utils.data.Dataset):
         )
 
         # Standardization for (non-image) views
-        self.mean_ci = self.data_df[['current', 'ir_1', 'ir_2']].mean()
-        self.std_ci = self.data_df[['current', 'ir_1', 'ir_2']].std()
+        self.mean_ci = self.data_df[['current', 'ir_1', 'ir_2', 'vis_1', 'vis_2']].mean()
+        self.std_ci = self.data_df[['current', 'ir_1', 'ir_2', 'vis_1', 'vis_2']].std()
 
         self.mean_angle_1 = self.data_df[['angle_1']].mean()
         self.std_angle_1 = self.data_df[['angle_1']].std()
@@ -1393,7 +1393,7 @@ class MultiviewChambersDataset(torch.utils.data.Dataset):
         samples['camera'] = [torch.as_tensor(
             img_sample.transpose((2, 0, 1)), dtype=torch.float32)]
 
-        ci_sample = (self.data_df[['current', 'ir_1', 'ir_2']].iloc[item] - self.mean_ci) / self.std_ci
+        ci_sample = (self.data_df[['current', 'ir_1', 'ir_2', 'vis_1', 'vis_2']].iloc[item] - self.mean_ci) / self.std_ci
         samples['current_intensities'] = [torch.as_tensor(
             ci_sample, dtype=torch.float32
         )]
