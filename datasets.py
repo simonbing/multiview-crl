@@ -1335,21 +1335,36 @@ class MultiviewChambersDataset(torch.utils.data.Dataset):
                                    root=data_root,
                                    download=True)
 
-        # Get observational data
-        obs_df = chamber_data.get_experiment(
-            name=f'{exp_name}_obs').as_pandas_dataframe()
-
-        # Get interventional data (not important that it is interventional, just more data!)
-        red_df = chamber_data.get_experiment(
-            name=f'{exp_name}_red').as_pandas_dataframe()
-        green_df = chamber_data.get_experiment(
-            name=f'{exp_name}_green').as_pandas_dataframe()
-        blue_df = chamber_data.get_experiment(
-            name=f'{exp_name}_blue').as_pandas_dataframe()
-        pol_1_df = chamber_data.get_experiment(
-            name=f'{exp_name}_pol_1').as_pandas_dataframe()
-        pol_2_df = chamber_data.get_experiment(
-            name=f'{exp_name}_pol_2').as_pandas_dataframe()
+        if exp_name == 'buchholz_1_synth_det':
+            # Get observational data
+            obs_df = chamber_data.get_experiment(
+                name='buchholz_1_obs_synth_det').as_pandas_dataframe()
+            # Get interventional data (not important that it is interventional, just more data!)
+            red_df = chamber_data.get_experiment(
+                name='buchholz_1_red_synth_det').as_pandas_dataframe()
+            green_df = chamber_data.get_experiment(
+                name='buchholz_1_green_synth_det').as_pandas_dataframe()
+            blue_df = chamber_data.get_experiment(
+                name='buchholz_1_blue_synth_det').as_pandas_dataframe()
+            pol_1_df = chamber_data.get_experiment(
+                name='buchholz_1_pol_1_synth_det').as_pandas_dataframe()
+            pol_2_df = chamber_data.get_experiment(
+                name='buchholz_1_pol_2_synth_det').as_pandas_dataframe()
+        else:
+            # Get observational data
+            obs_df = chamber_data.get_experiment(
+                name=f'{exp_name}_obs').as_pandas_dataframe()
+            # Get interventional data (not important that it is interventional, just more data!)
+            red_df = chamber_data.get_experiment(
+                name=f'{exp_name}_red').as_pandas_dataframe()
+            green_df = chamber_data.get_experiment(
+                name=f'{exp_name}_green').as_pandas_dataframe()
+            blue_df = chamber_data.get_experiment(
+                name=f'{exp_name}_blue').as_pandas_dataframe()
+            pol_1_df = chamber_data.get_experiment(
+                name=f'{exp_name}_pol_1').as_pandas_dataframe()
+            pol_2_df = chamber_data.get_experiment(
+                name=f'{exp_name}_pol_2').as_pandas_dataframe()
 
         self.data_df = pd.concat([obs_df, red_df, green_df, blue_df, pol_1_df, pol_2_df])
         self.env_idxs = np.concatenate(
@@ -1374,7 +1389,15 @@ class MultiviewChambersDataset(torch.utils.data.Dataset):
 
     def _env_name_map(self, idx):
         env_list = ['obs', 'red', 'green', 'blue', 'pol_1', 'pol_2']
-        map = [f'{self.exp_name}_{env}' for env in env_list]
+        if self.exp_name == 'buchholz_1_synth_det':
+            map = ['buchholz_1_obs_synth_det',
+                   'buchholz_1_red_synth_det',
+                   'buchholz_1_green_synth_det',
+                   'buchholz_1_blue_synth_det',
+                   'buchholz_1_pol_1_synth_det',
+                   'buchholz_1_pol_2_synth_det']
+        else:
+            map = [f'{self.exp_name}_{env}' for env in env_list]
 
         return map[idx]
 
